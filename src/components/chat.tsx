@@ -384,6 +384,23 @@ export function Chat() {
     stopRecording,
   ]);
 
+  const handleVoiceStart = useCallback(() => {
+    if (!isLoading && isSupported && !isTranscribing && !isRecording) {
+      startRecording();
+    }
+  }, [isLoading, isSupported, isTranscribing, isRecording, startRecording]);
+
+  const handleVoiceEnd = useCallback(() => {
+    if (isRecording || isRecordingRef.current) {
+      stopRecording();
+    }
+  }, [isRecording, stopRecording]);
+
+  // Xử lý sự kiện để tránh context menu trên mobile
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+  }, []);
+
   return (
     <div className="flex flex-col h-screen max-w-2xl mx-auto bg-background">
       {/* Messages */}
@@ -500,7 +517,12 @@ export function Chat() {
           {isSupported && (
             <Button
               type="button"
-              onClick={handleVoiceClick}
+              // onClick={handleVoiceClick}
+              onMouseDown={handleVoiceStart}
+              onMouseUp={handleVoiceEnd}
+              onTouchStart={handleVoiceStart}
+              onTouchEnd={handleVoiceEnd}
+              onContextMenu={handleContextMenu}
               disabled={isLoading || isTranscribing}
               className={`select-none ${
                 isRecording

@@ -94,7 +94,7 @@ QUAN TRỌNG:
 - Hãy thông minh trong việc hiểu ngữ cảnh và tạo danh mục phù hợp!`;
 
     const result = await streamText({
-      model: google("gemini-2.5-flash-preview-05-20"),
+      model: google("gemini-2.0-flash"),
       messages: [
         {
           role: "system",
