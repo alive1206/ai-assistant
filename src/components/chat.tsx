@@ -12,7 +12,10 @@ import {
   Calendar,
   Tag,
   Users,
+  Mic,
+  MicOff,
 } from "lucide-react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
 interface TransactionData {
   status: string;
@@ -27,20 +30,61 @@ interface TransactionData {
   };
 }
 
+// Type definitions for SpeechRecognition
+interface SpeechRecognitionEvent {
+  results: SpeechRecognitionResultList;
+}
+
+interface SpeechRecognitionErrorEvent {
+  error: string;
+}
+
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  onstart: (() => void) | null;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition: new () => SpeechRecognition;
+    webkitSpeechRecognition: new () => SpeechRecognition;
+  }
+}
+
 function parseAIResponse(content: string): TransactionData | null {
   try {
-    // Thử parse JSON trực tiếp
-    return JSON.parse(content);
-  } catch {
-    // Nếu không phải JSON, thử tìm JSON trong text
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        return JSON.parse(jsonMatch[0]);
-      } catch {
-        return null;
+    // Remove any leading/trailing whitespace
+    const cleanContent = content.trim();
+
+    // First try: parse as direct JSON
+    try {
+      return JSON.parse(cleanContent);
+    } catch {
+      // Second try: extract JSON from markdown code blocks
+      const markdownJsonMatch = cleanContent.match(
+        /```json\s*\n?([\s\S]*?)\n?```/
+      );
+      if (markdownJsonMatch) {
+        return JSON.parse(markdownJsonMatch[1].trim());
       }
+
+      // Third try: extract any JSON object from the text
+      const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+
+      return null;
     }
+  } catch (error) {
+    console.error("Error parsing AI response:", error);
     return null;
   }
 }
@@ -156,8 +200,189 @@ function TransactionCard({ data }: { data: TransactionData }) {
 }
 
 export function Chat() {
-  const { messages, input, handleInputChange, handleSubmit, isLoading } =
-    useChat();
+  const {
+    messages,
+    input,
+    handleInputChange,
+    handleSubmit,
+    isLoading,
+    setInput,
+  } = useChat();
+
+  const [isRecording, setIsRecording] = useState(false);
+  const [isSupported, setIsSupported] = useState(true);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const isRecordingRef = useRef(false);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    // Kiểm tra hỗ trợ Speech Recognition
+    if (typeof window !== "undefined") {
+      const SpeechRecognition =
+        window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        setIsSupported(false);
+        console.warn("Speech Recognition not supported");
+        return;
+      }
+
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = false;
+      recognitionRef.current.interimResults = false;
+      recognitionRef.current.lang = "vi-VN";
+
+      recognitionRef.current.onstart = () => {
+        console.log("Speech recognition started");
+        setIsRecording(true);
+        isRecordingRef.current = true;
+      };
+
+      recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
+        const transcript = event.results[0][0].transcript;
+        console.log("Transcript received:", transcript);
+
+        setInput(transcript);
+        setIsTranscribing(true);
+
+        // Tự động submit sau khi có kết quả
+        setTimeout(() => {
+          const form = document.querySelector("form");
+          if (form) {
+            const submitEvent = new Event("submit", {
+              bubbles: true,
+              cancelable: true,
+            });
+            form.dispatchEvent(submitEvent);
+          }
+          setIsTranscribing(false);
+        }, 300);
+      };
+
+      recognitionRef.current.onerror = (event: SpeechRecognitionErrorEvent) => {
+        console.error("Speech recognition error:", event.error);
+        setIsRecording(false);
+        setIsTranscribing(false);
+        isRecordingRef.current = false;
+
+        // Clear any pending timeouts
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
+        }
+
+        if (event.error === "not-allowed") {
+          alert(
+            "Vui lòng cho phép quyền truy cập microphone để sử dụng tính năng này."
+          );
+        } else if (event.error === "no-speech") {
+          // Không hiển thị alert cho trường hợp không có giọng nói
+          console.log("No speech detected");
+        } else if (event.error === "aborted") {
+          // Bình thường khi người dùng dừng recording
+          console.log("Speech recognition aborted");
+        } else {
+          console.log("Speech recognition error:", event.error);
+        }
+      };
+
+      recognitionRef.current.onend = () => {
+        console.log("Speech recognition ended");
+        setIsRecording(false);
+        isRecordingRef.current = false;
+
+        // Clear any pending timeouts
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
+        }
+      };
+    }
+
+    // Cleanup on unmount
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      if (recognitionRef.current && isRecordingRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (error) {
+          console.log("Error stopping recognition on cleanup:", error);
+        }
+      }
+    };
+  }, [setInput]);
+
+  const startRecording = useCallback(() => {
+    if (!isSupported || !recognitionRef.current || isRecordingRef.current) {
+      return;
+    }
+
+    try {
+      // Clear any existing timeout
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+
+      recognitionRef.current.start();
+      console.log("Starting speech recognition...");
+
+      // Set a timeout to auto-stop after 30 seconds max
+      timeoutRef.current = setTimeout(() => {
+        if (isRecordingRef.current && recognitionRef.current) {
+          try {
+            recognitionRef.current.stop();
+          } catch (error) {
+            console.log("Error stopping recognition after timeout:", error);
+          }
+        }
+      }, 30000);
+    } catch (error) {
+      console.error("Error starting recognition:", error);
+      setIsRecording(false);
+      isRecordingRef.current = false;
+    }
+  }, [isSupported]);
+
+  const stopRecording = useCallback(() => {
+    if (recognitionRef.current && isRecordingRef.current) {
+      try {
+        recognitionRef.current.stop();
+        console.log("Stopping speech recognition...");
+      } catch (error) {
+        console.log("Error stopping recognition:", error);
+        // Force reset state if stop fails
+        setIsRecording(false);
+        isRecordingRef.current = false;
+      }
+    }
+
+    // Clear timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
+
+  // Toggle recording on click
+  const handleVoiceClick = useCallback(() => {
+    if (!isLoading && isSupported && !isTranscribing) {
+      if (isRecording || isRecordingRef.current) {
+        stopRecording();
+      } else {
+        startRecording();
+      }
+    }
+  }, [
+    isLoading,
+    isSupported,
+    isTranscribing,
+    isRecording,
+    startRecording,
+    stopRecording,
+  ]);
 
   return (
     <div className="flex flex-col h-screen max-w-2xl mx-auto bg-background">
@@ -179,6 +404,9 @@ export function Chat() {
             </div>
             <div className="mt-4 text-xs space-y-1">
               <p>Ví dụ: cafe 25k, Minh vay tôi 500k, lương tháng 10tr</p>
+              {isSupported && (
+                <p className="text-pink-500">💡 Click nút mic để nói</p>
+              )}
             </div>
           </div>
         )}
@@ -265,16 +493,62 @@ export function Chat() {
             onChange={handleInputChange}
             placeholder="Nhập giao dịch... (VD: cafe 25k, Minh vay tôi 500k)"
             className="flex-1"
-            disabled={isLoading}
+            disabled={isLoading || isRecording || isTranscribing}
           />
+
+          {/* Voice Button */}
+          {isSupported && (
+            <Button
+              type="button"
+              onClick={handleVoiceClick}
+              disabled={isLoading || isTranscribing}
+              className={`select-none ${
+                isRecording
+                  ? "bg-red-500 hover:bg-red-600 animate-pulse scale-110"
+                  : isTranscribing
+                  ? "bg-yellow-500 hover:bg-yellow-600"
+                  : "bg-blue-500 hover:bg-blue-600"
+              } transition-all duration-200`}
+            >
+              {isRecording ? (
+                <MicOff className="w-4 h-4 text-white" />
+              ) : isTranscribing ? (
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Mic className="w-4 h-4 text-white" />
+              )}
+            </Button>
+          )}
+
+          {/* Send Button */}
           <Button
             type="submit"
-            disabled={isLoading || !input.trim()}
+            disabled={
+              isLoading || !input.trim() || isRecording || isTranscribing
+            }
             className="bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700"
           >
             <Send className="w-4 h-4" />
           </Button>
         </form>
+
+        {isRecording && (
+          <p className="text-xs text-center text-red-500 mt-2 animate-pulse font-medium">
+            🎤 Đang nghe... Click lại để dừng
+          </p>
+        )}
+
+        {isTranscribing && (
+          <p className="text-xs text-center text-yellow-600 mt-2 animate-pulse font-medium">
+            ⏳ Đang xử lý giọng nói...
+          </p>
+        )}
+
+        {!isSupported && (
+          <p className="text-xs text-center text-gray-500 mt-2">
+            Trình duyệt không hỗ trợ nhận dạng giọng nói
+          </p>
+        )}
       </div>
     </div>
   );
