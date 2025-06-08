@@ -1,36 +1,89 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Assistant
 
-## Getting Started
+Trợ lý tài chính thông minh, được xây dựng với Next.js, Vercel AI SDK và Google Gemini.
 
-First, run the development server:
+## Tính năng
+
+- 💬 Chat với AI để ghi nhận chi tiêu
+- 🏷️ Tự động phân loại danh mục chi tiêu
+- 💰 Hỗ trợ nhiều định dạng số tiền (25k, 50000, etc.)
+- 🎨 UI đẹp mắt với shadcn/ui components
+- 📱 Responsive design
+
+## Cài đặt
+
+1. Clone repository:
+
+```bash
+git clone <repository-url>
+cd ai-assistant
+```
+
+2. Cài đặt dependencies:
+
+```bash
+npm install
+# hoặc
+pnpm install
+```
+
+3. Tạo file `.env.local` và thêm API key của Google Gemini:
+
+```bash
+cp .env.example .env.local
+```
+
+Sau đó chỉnh sửa `.env.local` và thêm API key của bạn:
+
+```
+GOOGLE_GENERATIVE_AI_API_KEY=your_actual_api_key_here
+```
+
+4. Lấy API key từ [Google AI Studio](https://aistudio.google.com/app/apikey)
+
+5. Chạy ứng dụng:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
+# hoặc
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+6. Mở [http://localhost:3000](http://localhost:3000) trong trình duyệt
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Cách sử dụng
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Nhập các chi tiêu của bạn theo định dạng tự nhiên:
 
-## Learn More
+- `cafe 25k` → ✅ Đã ghi nhận: cafe hết 25.000đ vào danh mục Ăn uống ngày [ngày hiện tại]
+- `ăn trưa 50000` → ✅ Đã ghi nhận: ăn trưa hết 50.000đ vào danh mục Ăn uống ngày [ngày hiện tại]
+- `xăng xe 200k` → ✅ Đã ghi nhận: xăng xe hết 200.000đ vào danh mục Di chuyển ngày [ngày hiện tại]
 
-To learn more about Next.js, take a look at the following resources:
+## Công nghệ sử dụng
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Next.js 15** - React framework
+- **Vercel AI SDK** - AI integration
+- **Google Gemini** - AI model
+- **shadcn/ui** - UI components
+- **Tailwind CSS** - Styling
+- **TypeScript** - Type safety
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Danh mục tự động
 
-## Deploy on Vercel
+AI sẽ tự động phân loại chi tiêu vào các danh mục:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- 🍽️ Ăn uống (cafe, trà sữa, cơm, phở, etc.)
+- 🚗 Di chuyển (xăng, grab, taxi, etc.)
+- 🛍️ Mua sắm (quần áo, đồ dùng, etc.)
+- 🎮 Giải trí (phim, game, etc.)
+- 🏥 Sức khỏe (thuốc, khám bệnh, etc.)
+- 📚 Học tập (sách, khóa học, etc.)
+- 📦 Khác
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Deploy
+
+Ứng dụng có thể được deploy dễ dàng trên Vercel:
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/your-username/ai-assistant)
+
+Nhớ thêm biến môi trường `GOOGLE_GENERATIVE_AI_API_KEY` trong Vercel dashboard.
