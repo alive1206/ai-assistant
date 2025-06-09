@@ -1,14 +1,14 @@
-import { google } from "@ai-sdk/google";
+import { openai } from "@ai-sdk/openai";
 import { streamText } from "ai";
 
 export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
 
-    if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    if (!process.env.OPENAI_API_KEY) {
       return new Response(
         JSON.stringify({
-          error: "Missing GOOGLE_GENERATIVE_AI_API_KEY environment variable",
+          error: "Missing OPENAI_API_KEY environment variable",
         }),
         { status: 500, headers: { "Content-Type": "application/json" } }
       );
@@ -46,7 +46,15 @@ CÁCH XỬ LÝ:
 5. Sử dụng ngày hiện tại: ${currentDate}
 
 FORMAT TRẢ LỜI:
-Luôn trả lời theo format JSON CHÍNH XÁC như sau (không thêm markdown hay ký tự đặc biệt):
+LUÔN LUÔN trả lời theo format JSON hợp lệ HOÀN CHỈNH. KHÔNG BAO GIỜ trả lời dưới dạng streaming hay từng phần.
+
+Nếu input KHÔNG PHẢI là giao dịch tài chính, trả về:
+{
+  "status": "error",
+  "message": "Tôi chỉ có thể ghi nhận các giao dịch tài chính. Vui lòng cho tôi biết thông tin về chi tiêu, thu nhập, cho vay, đầu tư, v.v. Ví dụ: 'cafe 25k', 'lương tháng 10tr', 'Minh vay tôi 500k'."
+}
+
+Nếu là giao dịch tài chính hợp lệ, trả về:
 {
   "status": "success",
   "message": "✅ Đã ghi nhận: [mô tả chi tiết] [số tiền]đ",
@@ -60,41 +68,16 @@ Luôn trả lời theo format JSON CHÍNH XÁC như sau (không thêm markdown h
   }
 }
 
-VÍ DỤ:
-Input: "cafe 25k"
-Output: {
-  "status": "success", 
-  "message": "✅ Đã ghi nhận: cafe hết 25.000đ vào danh mục Ăn uống ngày ${currentDate}",
-  "transaction": {
-    "type": "expense",
-    "amount": 25000,
-    "description": "cafe",
-    "category": "Ăn uống",
-    "date": "${currentDate}"
-  }
-}
-
-Input: "Minh vay tôi 500k"
-Output: {
-  "status": "success",
-  "message": "✅ Đã ghi nhận: Minh vay bạn 500.000đ vào danh mục Cho vay ngày ${currentDate}", 
-  "transaction": {
-    "type": "loan_give",
-    "amount": 500000,
-    "description": "cho Minh vay",
-    "category": "Cho vay",
-    "date": "${currentDate}",
-    "person": "Minh"
-  }
-}
-
 QUAN TRỌNG: 
-- Chỉ trả về JSON thuần túy, không có \`\`\`json hay bất kỳ markdown nào
+- Chỉ trả về JSON thuần túy, không có markdown, không có explanation
+- Trả về toàn bộ JSON trong một lần, không streaming từng phần
 - Luôn sử dụng ngày hiện tại: ${currentDate}
+- Phân biệt rõ ràng giữa giao dịch tài chính và chat thông thường
 - Hãy thông minh trong việc hiểu ngữ cảnh và tạo danh mục phù hợp!`;
 
-    const result = await streamText({
-      model: google("gemini-2.0-flash"),
+    // Sử dụng streamText để tương thích với useChat hook
+    const result = streamText({
+      model: openai("gpt-4o"),
       messages: [
         {
           role: "system",
@@ -104,6 +87,7 @@ QUAN TRỌNG:
       ],
     });
 
+    // Trả về stream response tương thích với useChat
     return result.toDataStreamResponse();
   } catch (error) {
     console.error("API Error:", error);

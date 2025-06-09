@@ -30,34 +30,6 @@ interface TransactionData {
   };
 }
 
-// Type definitions for SpeechRecognition
-interface SpeechRecognitionEvent {
-  results: SpeechRecognitionResultList;
-}
-
-interface SpeechRecognitionErrorEvent {
-  error: string;
-}
-
-interface SpeechRecognition extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start(): void;
-  stop(): void;
-  onstart: (() => void) | null;
-  onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
-  onend: (() => void) | null;
-}
-
-declare global {
-  interface Window {
-    SpeechRecognition: new () => SpeechRecognition;
-    webkitSpeechRecognition: new () => SpeechRecognition;
-  }
-}
-
 function parseAIResponse(content: string): TransactionData | null {
   try {
     // Remove any leading/trailing whitespace
@@ -212,164 +184,160 @@ export function Chat() {
   const [isRecording, setIsRecording] = useState(false);
   const [isSupported, setIsSupported] = useState(true);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const isRecordingRef = useRef(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
-    // Kiểm tra hỗ trợ Speech Recognition
+    // Kiểm tra hỗ trợ MediaRecorder và getUserMedia
     if (typeof window !== "undefined") {
-      const SpeechRecognition =
-        window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SpeechRecognition) {
+      if (
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia ||
+        !window.MediaRecorder
+      ) {
         setIsSupported(false);
-        console.warn("Speech Recognition not supported");
+        console.warn("Audio recording not supported");
         return;
       }
-
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = false;
-      recognitionRef.current.lang = "vi-VN";
-
-      recognitionRef.current.onstart = () => {
-        console.log("Speech recognition started");
-        setIsRecording(true);
-        isRecordingRef.current = true;
-      };
-
-      recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
-        const transcript = event.results[0][0].transcript;
-        console.log("Transcript received:", transcript);
-
-        setInput(transcript);
-        setIsTranscribing(true);
-
-        // Tự động submit sau khi có kết quả
-        setTimeout(() => {
-          const form = document.querySelector("form");
-          if (form) {
-            const submitEvent = new Event("submit", {
-              bubbles: true,
-              cancelable: true,
-            });
-            form.dispatchEvent(submitEvent);
-          }
-          setIsTranscribing(false);
-        }, 300);
-      };
-
-      recognitionRef.current.onerror = (event: SpeechRecognitionErrorEvent) => {
-        console.error("Speech recognition error:", event.error);
-        setIsRecording(false);
-        setIsTranscribing(false);
-        isRecordingRef.current = false;
-
-        // Clear any pending timeouts
-        if (timeoutRef.current) {
-          clearTimeout(timeoutRef.current);
-          timeoutRef.current = null;
-        }
-
-        if (event.error === "not-allowed") {
-          alert(
-            "Vui lòng cho phép quyền truy cập microphone để sử dụng tính năng này."
-          );
-        } else if (event.error === "no-speech") {
-          // Không hiển thị alert cho trường hợp không có giọng nói
-          console.log("No speech detected");
-        } else if (event.error === "aborted") {
-          // Bình thường khi người dùng dừng recording
-          console.log("Speech recognition aborted");
-        } else {
-          console.log("Speech recognition error:", event.error);
-        }
-      };
-
-      recognitionRef.current.onend = () => {
-        console.log("Speech recognition ended");
-        setIsRecording(false);
-        isRecordingRef.current = false;
-
-        // Clear any pending timeouts
-        if (timeoutRef.current) {
-          clearTimeout(timeoutRef.current);
-          timeoutRef.current = null;
-        }
-      };
     }
 
     // Cleanup on unmount
     return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-      if (recognitionRef.current && isRecordingRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch (error) {
-          console.log("Error stopping recognition on cleanup:", error);
-        }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
       }
     };
-  }, [setInput]);
+  }, []);
 
-  const startRecording = useCallback(() => {
-    if (!isSupported || !recognitionRef.current || isRecordingRef.current) {
+  const startRecording = useCallback(async () => {
+    if (!isSupported || isRecording) {
       return;
     }
 
     try {
-      // Clear any existing timeout
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
+      setIsRecording(true);
+      audioChunksRef.current = [];
 
-      recognitionRef.current.start();
-      console.log("Starting speech recognition...");
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
 
-      // Set a timeout to auto-stop after 30 seconds max
-      timeoutRef.current = setTimeout(() => {
-        if (isRecordingRef.current && recognitionRef.current) {
-          try {
-            recognitionRef.current.stop();
-          } catch (error) {
-            console.log("Error stopping recognition after timeout:", error);
-          }
+      streamRef.current = stream;
+
+      // Create MediaRecorder
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: "audio/webm;codecs=opus",
+      });
+
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
         }
-      }, 30000);
+      };
+
+      mediaRecorder.onstop = async () => {
+        setIsRecording(false);
+        setIsTranscribing(true);
+
+        try {
+          // Create audio blob
+          const audioBlob = new Blob(audioChunksRef.current, {
+            type: "audio/webm",
+          });
+
+          // Send to Whisper API
+          const formData = new FormData();
+          formData.append("audio", audioBlob, "recording.webm");
+
+          const response = await fetch("/api/whisper", {
+            method: "POST",
+            body: formData,
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            const transcript = data.text.trim();
+
+            if (transcript) {
+              setInput(transcript);
+
+              // Auto submit after getting transcript
+              setTimeout(() => {
+                const form = document.querySelector("form");
+                if (form) {
+                  const submitEvent = new Event("submit", {
+                    bubbles: true,
+                    cancelable: true,
+                  });
+                  form.dispatchEvent(submitEvent);
+                }
+              }, 300);
+            } else {
+              // Transcript không hợp lệ, chỉ hiển thị trong input để user xem
+              if (transcript) {
+                setInput(transcript);
+              }
+              console.log("Invalid transcript:", transcript);
+            }
+          } else {
+            console.error("Transcription failed");
+            alert("Không thể chuyển đổi giọng nói. Vui lòng thử lại.");
+          }
+        } catch (error) {
+          console.error("Error processing audio:", error);
+          alert("Có lỗi xảy ra khi xử lý âm thanh.");
+        } finally {
+          setIsTranscribing(false);
+        }
+
+        // Clean up stream
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+        }
+      };
+
+      mediaRecorder.start();
+      console.log("Recording started...");
     } catch (error) {
-      console.error("Error starting recognition:", error);
+      console.error("Error starting recording:", error);
       setIsRecording(false);
-      isRecordingRef.current = false;
+
+      if (error instanceof Error && error.name === "NotAllowedError") {
+        alert(
+          "Vui lòng cho phép quyền truy cập microphone để sử dụng tính năng này."
+        );
+      } else {
+        alert("Không thể khởi động recording. Vui lòng thử lại.");
+      }
     }
-  }, [isSupported]);
+  }, [isSupported, isRecording, setInput]);
 
   const stopRecording = useCallback(() => {
-    if (recognitionRef.current && isRecordingRef.current) {
+    if (mediaRecorderRef.current && isRecording) {
       try {
-        recognitionRef.current.stop();
-        console.log("Stopping speech recognition...");
+        mediaRecorderRef.current.stop();
+        console.log("Stopping recording...");
       } catch (error) {
-        console.log("Error stopping recognition:", error);
-        // Force reset state if stop fails
+        console.log("Error stopping recording:", error);
         setIsRecording(false);
-        isRecordingRef.current = false;
       }
     }
-
-    // Clear timeout
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-  }, []);
+  }, [isRecording]);
 
   // Toggle recording on click
   const handleVoiceClick = useCallback(() => {
     if (!isLoading && isSupported && !isTranscribing) {
-      if (isRecording || isRecordingRef.current) {
+      if (isRecording) {
         stopRecording();
       } else {
         startRecording();
@@ -391,7 +359,7 @@ export function Chat() {
   }, [isLoading, isSupported, isTranscribing, isRecording, startRecording]);
 
   const handleVoiceEnd = useCallback(() => {
-    if (isRecording || isRecordingRef.current) {
+    if (isRecording) {
       stopRecording();
     }
   }, [isRecording, stopRecording]);
@@ -455,18 +423,55 @@ export function Chat() {
               ) : (
                 <div className="space-y-2">
                   {(() => {
+                    // Chỉ parse khi message đã hoàn thành (không còn streaming)
                     const parsedData = parseAIResponse(message.content);
-                    if (parsedData && parsedData.transaction) {
-                      return <TransactionCard data={parsedData} />;
-                    } else {
+                    console.log(parsedData);
+                    if (parsedData) {
+                      if (
+                        parsedData.status === "success" &&
+                        parsedData.transaction
+                      ) {
+                        return <TransactionCard data={parsedData} />;
+                      } else if (
+                        parsedData.status === "error" &&
+                        parsedData.message
+                      ) {
+                        // Hiển thị error message thân thiện thay vì JSON
+
+                        return (
+                          <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2">
+                            <p className="text-sm text-red-700">
+                              ❌ {parsedData.message}
+                            </p>
+                          </div>
+                        );
+                      }
+                    }
+
+                    // Kiểm tra xem có phải là JSON chưa hoàn thành không
+
+                    const trimmedContent = message.content.trim();
+
+                    if (
+                      trimmedContent.startsWith("{") &&
+                      !trimmedContent.endsWith("}")
+                    ) {
+                      // JSON chưa hoàn thành, hiển thị loading
+
                       return (
                         <div className="bg-muted rounded-lg px-4 py-2">
-                          <p className="text-sm whitespace-pre-wrap">
-                            {message.content}
-                          </p>
+                          Tôi đang ghi nhận giao dịch, vui lòng chờ 1 chút...
                         </div>
                       );
                     }
+
+                    return (
+                      <div className="bg-muted rounded-lg px-4 py-2">
+                        <p className="text-sm whitespace-pre-wrap">
+                          {message.content}
+                        </p>
+                      </div>
+                    );
                   })()}
                 </div>
               )}
@@ -556,13 +561,13 @@ export function Chat() {
 
         {isRecording && (
           <p className="text-xs text-center text-red-500 mt-2 animate-pulse font-medium">
-            🎤 Đang nghe... Click lại để dừng
+            🎤 Đang ghi âm... Thả để dừng
           </p>
         )}
 
         {isTranscribing && (
           <p className="text-xs text-center text-yellow-600 mt-2 animate-pulse font-medium">
-            ⏳ Đang xử lý giọng nói...
+            ⏳ Đang chuyển đổi giọng nói thành text...
           </p>
         )}
 
